@@ -44,7 +44,8 @@ let
             newdata = newReq[items],
 
             // Add that data to rolling aggregate
-            updatedData = List.Combine({data, newdata}),
+            //updatedData = List.Combine({data, newdata}),
+	        updatedData = newdata,
 
             // Check for the next URL using function
             nextPageUrl = newReq[pageDetails][nextPageUrl],
