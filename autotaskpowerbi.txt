@@ -4,58 +4,78 @@ let
     // By Terran Brown with help from the Stackoverflow community and others
 
 
-// {"filter":[{"id":"gte","value":"0"}]}
+    // Common parameters
+    queryStringApiIntegrationCodevar = "xxxxx",
+    queryStringUserNamevar = "xxxxx",
+    queryStringUserSecretvar = "xxxxx",
+    queryStringContentTypevar = "application/json",
+    
+    headers = [
+        #"ApiIntegrationCode"=queryStringApiIntegrationCodevar,
+        #"UserName"=queryStringUserNamevar,
+        #"Secret"=queryStringUserSecretvar,
+        #"Content-Type"=queryStringContentTypevar
+    ],
 
-// searchFilter = "{""filter"":[{""id"":""gte"",""value"":""0""}]}",
-// {"filter":[{"op":"gte","field":"id","value":"0"}]}
-searchFilter = "{""filter"":[{""op"":""gte"",""field"":""id"",""value"":""0""}]}",
-// searchParam = Uri.EscapeDataString(searchFilter),
+    apiUrl = "https://webservices16.autotask.net/ATServicesRest/V1.0/Roles/query",
+    apiUrlnew = "https://webservices16.autotask.net/atservicesrest/V1.0/Roles/query/next",
+    searchFilter = "{""filter"":[{""op"":""gte"",""field"":""id"",""value"":""0""}]}",
 
-//baseuri = "https://webservices16.autotask.net/ATServicesRest/V1.0/Projects/" & searchParam,
-apiUrl = "https://webservices16.autotask.net/ATServicesRest/V1.0/Roles/query",
-apiUrlnew = "https://webservices16.autotask.net/atservicesrest/V1.0/Roles/query/next",
-
-queryStringApiIntegrationCodevar = "xxxxx",
-queryStringUserNamevar = "xxxxx",
-queryStringUserSecretvar = "xxxxx",
-queryStringContentTypevar = "application/json",
-queryStringnew = "",
-
-// NB Making calls to multiple instances from the same Power BI Dash can cause problems with authentication
-
-headers = [Headers = [
-                #"ApiIntegrationCode"=queryStringApiIntegrationCodevar,
-                #"UserName"=queryStringUserNamevar,
-                #"Secret"=queryStringUserSecretvar,
-                #"Content-Type"=queryStringContentTypevar],
-                Query = [search = searchFilter]
-                ],
-
-//initReq = Json.Document(Web.Contents(apiUrl, headers)),
-initReq = try Json.Document(Web.Contents(apiUrl, headers)) otherwise error "Failed to retrieve data from the API 1st Pass",
-//initReq = try Json.Document(Web.Contents(apiUrl, headers)) otherwise error apiUrl,
-
-initData = initReq[items],
-    //We want to get data = {lastNPagesData, thisPageData}, where each list has the limit # of Records, 
-    //then we can List.Combine() the two lists on each iteration to aggregate all the records. We can then
-    //create a table from those records
-    gather = (data as list, uri) =>
+    // Functions
+    converturl = (data as text) as text => 
         let
-            //build new uri 
-            newUri = try Json.Document(Web.Contents(uri, headers))[pageDetails][nextPageUrl] otherwise error "Failed to retrieve data from the API 2nd Pass",
-            //get new req & data
-            newReq = try Json.Document(Web.Contents(newUri, headers)) otherwise error "Failed to retrieve data from the API 3rd Pass",
+            out = Uri.Parts("http://contoso?a=" & Text.Replace(data, "&", "%26"))[Query][a]
+        in
+            out,
+
+    gatherpagingdata = (data as list, uri as text, headers, searchFilter) =>
+        let
+            // Get the Data
+            // Replace Percent URL-encoded characters
+            //https://webservices4.autotask.net/ATServicesRest/V1.0/Projects/query?paging={"filter":[{"op":"gte","field":"id","value":"0"}]}&search={"filter":[{"op":"gte","field":"id","value":"0"}]}/next?paging={"pageSize":500,"previousIds":[3],"nextIds":[593]}&search={"filter":[{"op":"gte","field":"id","value":"0"}]}
+            nextpagefunc = converturl(uri) as text,        
+            textBeforePaging = Text.BeforeDelimiter(nextpagefunc, "?paging="),
+            textAfterPagingandBeforesearch = Text.BetweenDelimiters(nextpagefunc, "/next?paging=", "&search="),
+            //textAfterPagingandBeforesearch = try Text.BetweenDelimiters(nextpagefunc, "/next?paging=", "&search=") as text otherwise Text.BetweenDelimiters(nextpagefunc, "query?paging=", "&search=") as text,
+            textAfterPagingandsearchEquals = Text.BetweenDelimiters(nextpagefunc, "&search=", "/next?paging"),
+            
+            // pull out search filter
+            newReq = Json.Document(Web.Contents(apiUrlnew, [Headers=headers, Query=[paging=textAfterPagingandBeforesearch , search=textAfterPagingandsearchEquals]])),
             newdata = newReq[items],
-            //add that data to rolling aggregate
-            data = List.Combine({data, newdata}),
-            //if theres no next page of data, return. if there is, call @gather again to get more data
-            check = if newReq[pageDetails][nextPageUrl] = null then data else @gather(data, newUri)
-        in check,
-    //before we call gather(), we want see if its even necesarry. First request returns only one page? Return.
-    //outputList = try if initReq[pageDetails][nextPageUrl] = null then initData else gather(initData, BaseURI)otherwise error uri,
-    outputList = try if initReq[pageDetails][nextPageUrl] = null then initData else gather(initData, apiUrl)otherwise error "Failed outputList",
-    //then place records into a table. This will expand all columns available in the record.
+
+            // Add that data to rolling aggregate
+            updatedData = List.Combine({data, newdata}),
+
+            // Check for the next URL using function
+            nextPageUrl = newReq[pageDetails][nextPageUrl],
+
+            // If there's no next page of data, return. If there is, call @gatherpagingdata again to get more data
+            result = if nextPageUrl <> null then @gatherpagingdata(updatedData, nextPageUrl, headers , searchFilter) else updatedData
+        in
+            result,
+
+    // Execute
+    //initReq = try Json.Document(Web.Contents(apiUrl, [Headers=headers, Query=[search=searchFilter]])) otherwise error "Failed to retrieve data from the API 1st Pass",
+    initReq = try Json.Document(Web.Contents(apiUrl, [Headers=headers, Query=[paging=searchFilter, search=searchFilter ]])) otherwise error "Failed to retrieve data from the API 1st Pass",
+    initData = initReq[items],
+
+    // Before we call gather(), we want to see if it's even necessary.
+    // First request returns only one page? Return.
+    // OutputList = try if initReq[pageDetails][nextPageUrl] = null then initData else gather(initData, BaseURI) otherwise error uri,
+    uri = initReq[pageDetails][nextPageUrl],
+
+    // Decode the extracted value
+    // Replace Percent URL-encoded characters
+    nextpagefunc = converturl(uri),
+
+    outputList = 
+        if initReq[pageDetails][nextPageUrl] = null then 
+            initData 
+        else 
+            gatherpagingdata(initData, uri, headers , searchFilter),
+
+    // Then place records into a table. This will expand all columns available in the record.
     expand = Table.FromRecords(outputList),
     #"Sorted Rows" = Table.Sort(expand,{{"id", Order.Descending}})
 in
-    #"Sorted Rows"
+    expand
