@@ -1,0 +1,61 @@
+let
+    // NB Making calls to multiple instances from the same Power BI Dash can cause problems with authentication
+    // check data source security
+    // By Terran Brown with help from the Stackoverflow community and others
+
+
+// {"filter":[{"id":"gte","value":"0"}]}
+
+// searchFilter = "{""filter"":[{""id"":""gte"",""value"":""0""}]}",
+// {"filter":[{"op":"gte","field":"id","value":"0"}]}
+searchFilter = "{""filter"":[{""op"":""gte"",""field"":""id"",""value"":""0""}]}",
+// searchParam = Uri.EscapeDataString(searchFilter),
+
+//baseuri = "https://webservices16.autotask.net/ATServicesRest/V1.0/Projects/" & searchParam,
+apiUrl = "https://webservices16.autotask.net/ATServicesRest/V1.0/Roles/query",
+apiUrlnew = "https://webservices16.autotask.net/atservicesrest/V1.0/Roles/query/next",
+
+queryStringApiIntegrationCodevar = "xxxxx",
+queryStringUserNamevar = "xxxxx",
+queryStringUserSecretvar = "xxxxx",
+queryStringContentTypevar = "application/json",
+queryStringnew = "",
+
+// NB Making calls to multiple instances from the same Power BI Dash can cause problems with authentication
+
+headers = [Headers = [
+                #"ApiIntegrationCode"=queryStringApiIntegrationCodevar,
+                #"UserName"=queryStringUserNamevar,
+                #"Secret"=queryStringUserSecretvar,
+                #"Content-Type"=queryStringContentTypevar],
+                Query = [search = searchFilter]
+                ],
+
+//initReq = Json.Document(Web.Contents(apiUrl, headers)),
+initReq = try Json.Document(Web.Contents(apiUrl, headers)) otherwise error "Failed to retrieve data from the API 1st Pass",
+//initReq = try Json.Document(Web.Contents(apiUrl, headers)) otherwise error apiUrl,
+
+initData = initReq[items],
+    //We want to get data = {lastNPagesData, thisPageData}, where each list has the limit # of Records, 
+    //then we can List.Combine() the two lists on each iteration to aggregate all the records. We can then
+    //create a table from those records
+    gather = (data as list, uri) =>
+        let
+            //build new uri 
+            newUri = try Json.Document(Web.Contents(uri, headers))[pageDetails][nextPageUrl] otherwise error "Failed to retrieve data from the API 2nd Pass",
+            //get new req & data
+            newReq = try Json.Document(Web.Contents(newUri, headers)) otherwise error "Failed to retrieve data from the API 3rd Pass",
+            newdata = newReq[items],
+            //add that data to rolling aggregate
+            data = List.Combine({data, newdata}),
+            //if theres no next page of data, return. if there is, call @gather again to get more data
+            check = if newReq[pageDetails][nextPageUrl] = null then data else @gather(data, newUri)
+        in check,
+    //before we call gather(), we want see if its even necesarry. First request returns only one page? Return.
+    //outputList = try if initReq[pageDetails][nextPageUrl] = null then initData else gather(initData, BaseURI)otherwise error uri,
+    outputList = try if initReq[pageDetails][nextPageUrl] = null then initData else gather(initData, apiUrl)otherwise error "Failed outputList",
+    //then place records into a table. This will expand all columns available in the record.
+    expand = Table.FromRecords(outputList),
+    #"Sorted Rows" = Table.Sort(expand,{{"id", Order.Descending}})
+in
+    #"Sorted Rows"
