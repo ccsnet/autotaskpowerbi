@@ -1,0 +1,20 @@
+let
+
+    // Common parameters
+headers = [Headers = [
+                #"ApiIntegrationCode"="xxxxx",
+                #"UserName"="xxxxx",
+                #"Secret"="xxxxx",
+                #"Content-Type"="application/json"]],
+
+apiUrl = "https://webservices16.autotask.net/ATServicesRest/V1.0/Projects/entityInformation/fields",
+
+initReq = Json.Document(Web.Contents(apiUrl, headers)),
+    initData = initReq[fields],
+    expand = Table.FromRecords(initData),
+#"Filtered Rows" = Table.SelectRows(expand, each ([isPickList] = true) and ([name] = "status")),
+    picklistValues = #"Filtered Rows"{0}[picklistValues],
+    #"Converted to Table" = Table.FromList(picklistValues, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+    #"Expanded Column1" = Table.ExpandRecordColumn(#"Converted to Table", "Column1", {"value", "label", "isDefaultValue", "sortOrder", "parentValue", "isActive", "isSystem"}, {"Column1.value", "Column1.label", "Column1.isDefaultValue", "Column1.sortOrder", "Column1.parentValue", "Column1.isActive", "Column1.isSystem"})
+in
+    #"Expanded Column1"
